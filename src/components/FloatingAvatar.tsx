@@ -1,79 +1,208 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useMemo, useRef, useState } from "react";
+import { Canvas, useFrame, useLoader } from "@react-three/fiber";
+import { Float, Environment, ContactShadows } from "@react-three/drei";
+import * as THREE from "three";
 import bikkey1 from "@/assets/bikkey-1.png";
 import bikkey2 from "@/assets/bikkey-2.png";
 import bikkey3 from "@/assets/bikkey-3.png";
 
-const photos = [bikkey1, bikkey2, bikkey3];
+const photoUrls = [bikkey1, bikkey2, bikkey3];
 
-// 3D-tilt floating avatar with rotating photo carousel and orbiting glow rings.
+/**
+ * A rotating triangular prism whose three side-faces each show a different
+ * portrait. Auto-rotates idly and reacts subtly to pointer position.
+ */
+function PhotoPrism({ pointer }: { pointer: { x: number; y: number } }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const textures = useLoader(THREE.TextureLoader, photoUrls);
+
+  // Make sure colors look right with the renderer's color management.
+  useMemo(() => {
+    textures.forEach((t) => {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = 8;
+    });
+  }, [textures]);
+
+  useFrame((_, delta) => {
+    const g = groupRef.current;
+    if (!g) return;
+    // Idle auto-rotation
+    g.rotation.y += delta * 0.45;
+    // Subtle tilt towards the pointer
+    const targetX = pointer.y * 0.35;
+    const targetZ = -pointer.x * 0.2;
+    g.rotation.x += (targetX - g.rotation.x) * 0.06;
+    g.rotation.z += (targetZ - g.rotation.z) * 0.06;
+  });
+
+  // Triangular prism: 3 radial segments, tall enough to frame a portrait.
+  const radius = 1.1;
+  const height = 2.6;
+
+  return (
+    <group ref={groupRef}>
+      {/* Solid colored prism body (top/bottom + back of side faces) */}
+      <mesh castShadow receiveShadow>
+        <cylinderGeometry args={[radius, radius, height, 3, 1, false]} />
+        <meshStandardMaterial
+          color="#1a1a3a"
+          metalness={0.6}
+          roughness={0.25}
+          emissive="#4f46e5"
+          emissiveIntensity={0.15}
+        />
+      </mesh>
+
+      {/* Three photo planes mounted on each side of the prism */}
+      {textures.map((tex, i) => {
+        const angle = (i / 3) * Math.PI * 2;
+        // Distance from center to the midpoint of a triangle side
+        const apothem = radius * Math.cos(Math.PI / 3);
+        const x = Math.sin(angle) * (apothem + 0.01);
+        const z = Math.cos(angle) * (apothem + 0.01);
+        // Plane width = side length of the equilateral triangle
+        const sideLen = radius * Math.sqrt(3);
+        return (
+          <mesh key={i} position={[x, 0, z]} rotation={[0, angle, 0]}>
+            <planeGeometry args={[sideLen * 0.95, height * 0.92]} />
+            <meshStandardMaterial
+              map={tex}
+              roughness={0.4}
+              metalness={0.1}
+              emissiveMap={tex}
+              emissive="#ffffff"
+              emissiveIntensity={0.08}
+              toneMapped={false}
+            />
+          </mesh>
+        );
+      })}
+
+      {/* Glowing rim ring around the prism */}
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, -height / 2 - 0.05, 0]}>
+        <torusGeometry args={[radius * 1.15, 0.03, 16, 64]} />
+        <meshStandardMaterial
+          color="#7c5cff"
+          emissive="#7c5cff"
+          emissiveIntensity={2}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, height / 2 + 0.05, 0]}>
+        <torusGeometry args={[radius * 1.15, 0.03, 16, 64]} />
+        <meshStandardMaterial
+          color="#22d3ee"
+          emissive="#22d3ee"
+          emissiveIntensity={2}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+/** Small orbiting particles for extra depth. */
+function OrbitingDots() {
+  const groupRef = useRef<THREE.Group>(null);
+  const dots = useMemo(
+    () =>
+      Array.from({ length: 18 }).map((_, i) => ({
+        radius: 1.8 + Math.random() * 0.9,
+        speed: 0.2 + Math.random() * 0.4,
+        offset: Math.random() * Math.PI * 2,
+        y: (Math.random() - 0.5) * 2.4,
+        size: 0.025 + Math.random() * 0.04,
+        color: i % 2 === 0 ? "#7c5cff" : "#22d3ee",
+      })),
+    [],
+  );
+
+  useFrame(({ clock }) => {
+    const g = groupRef.current;
+    if (!g) return;
+    const t = clock.getElapsedTime();
+    g.children.forEach((child, i) => {
+      const d = dots[i];
+      child.position.x = Math.cos(t * d.speed + d.offset) * d.radius;
+      child.position.z = Math.sin(t * d.speed + d.offset) * d.radius;
+      child.position.y = d.y + Math.sin(t * 0.8 + d.offset) * 0.15;
+    });
+  });
+
+  return (
+    <group ref={groupRef}>
+      {dots.map((d, i) => (
+        <mesh key={i}>
+          <sphereGeometry args={[d.size, 12, 12]} />
+          <meshStandardMaterial
+            color={d.color}
+            emissive={d.color}
+            emissiveIntensity={2.5}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/** Hero avatar built with a real Three.js scene via React Three Fiber. */
 export function FloatingAvatar() {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [idx, setIdx] = useState(0);
+  const [pointer, setPointer] = useState({ x: 0, y: 0 });
 
-  useEffect(() => {
-    const t = setInterval(() => setIdx((n) => (n + 1) % photos.length), 3500);
-    return () => clearInterval(t);
-  }, []);
-
-  const onMove = (e: React.MouseEvent) => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width - 0.5;
-    const y = (e.clientY - r.top) / r.height - 0.5;
-    el.style.setProperty("--rx", `${-y * 14}deg`);
-    el.style.setProperty("--ry", `${x * 14}deg`);
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setPointer({
+      x: ((e.clientX - r.left) / r.width) * 2 - 1,
+      y: -(((e.clientY - r.top) / r.height) * 2 - 1),
+    });
   };
-  const onLeave = () => {
-    const el = wrapRef.current;
-    if (!el) return;
-    el.style.setProperty("--rx", `0deg`);
-    el.style.setProperty("--ry", `0deg`);
-  };
+  const handlePointerLeave = () => setPointer({ x: 0, y: 0 });
 
   return (
     <div
-      ref={wrapRef}
-      onMouseMove={onMove}
-      onMouseLeave={onLeave}
-      className="relative mx-auto h-[320px] w-[320px] sm:h-[400px] sm:w-[400px]"
-      style={{ perspective: "1000px" }}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={handlePointerLeave}
+      className="relative mx-auto h-[360px] w-[360px] sm:h-[440px] sm:w-[440px]"
     >
-      {/* orbiting rings */}
-      <div className="absolute inset-0 animate-spin-slow rounded-full border border-primary/30" />
-      <div
-        className="absolute inset-4 rounded-full border border-accent/30"
-        style={{ animation: "spin 24s linear infinite reverse" }}
-      />
-      <div className="absolute -inset-6 rounded-full bg-[var(--gradient-radial)] blur-2xl" />
+      {/* Background glow halo */}
+      <div className="pointer-events-none absolute -inset-8 rounded-full bg-[var(--gradient-radial)] blur-3xl" />
 
-      {/* tilting photo card */}
-      <div
-        className="relative h-full w-full overflow-hidden rounded-full shadow-glow"
-        style={{
-          transform: "rotateX(var(--rx,0)) rotateY(var(--ry,0))",
-          transition: "transform 0.2s ease-out",
-          transformStyle: "preserve-3d",
-        }}
+      <Canvas
+        shadows
+        dpr={[1, 2]}
+        camera={{ position: [0, 0.4, 5], fov: 38 }}
+        gl={{ antialias: true, alpha: true }}
+        className="!absolute inset-0"
       >
-        {photos.map((p, i) => (
-          <img
-            key={i}
-            src={p}
-            alt="Bikkey Chaudhary portrait"
-            className="absolute inset-0 h-full w-full object-cover transition-opacity duration-1000"
-            style={{ opacity: i === idx ? 1 : 0 }}
-          />
-        ))}
-        <div className="absolute inset-0 bg-gradient-to-t from-background/60 via-transparent to-transparent" />
-      </div>
+        <color attach="background" args={["#00000000"]} />
+        <ambientLight intensity={0.6} />
+        <directionalLight
+          position={[3, 4, 5]}
+          intensity={1.2}
+          castShadow
+          shadow-mapSize-width={1024}
+          shadow-mapSize-height={1024}
+        />
+        <pointLight position={[-4, -2, -3]} intensity={1.4} color="#7c5cff" />
+        <pointLight position={[4, -1, 2]} intensity={1} color="#22d3ee" />
 
-      {/* floating dots */}
-      <div className="pointer-events-none absolute -right-4 top-10 h-3 w-3 animate-float rounded-full bg-accent shadow-glow-cyan" />
-      <div
-        className="pointer-events-none absolute -left-2 bottom-16 h-2 w-2 rounded-full bg-primary shadow-glow"
-        style={{ animation: "float 5s ease-in-out infinite 1s" }}
-      />
+        <Suspense fallback={null}>
+          <Float speed={1.4} rotationIntensity={0.2} floatIntensity={0.8}>
+            <PhotoPrism pointer={pointer} />
+          </Float>
+          <OrbitingDots />
+          <ContactShadows
+            position={[0, -1.7, 0]}
+            opacity={0.45}
+            scale={6}
+            blur={2.4}
+            far={3}
+          />
+          <Environment preset="city" />
+        </Suspense>
+      </Canvas>
     </div>
   );
 }
