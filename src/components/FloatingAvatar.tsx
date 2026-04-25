@@ -8,7 +8,7 @@ import bikkey1 from "@/assets/bikkey-1.png";
 import bikkey2 from "@/assets/bikkey-2.png";
 import bikkey3 from "@/assets/bikkey-3.png";
 
-const photoUrls = [bikkey1, bikkey2, bikkey3];
+const photoUrls: string[] = [bikkey1, bikkey2, bikkey3];
 
 type PhotoAdjust = {
   brightness: number; // 0.5 .. 2
