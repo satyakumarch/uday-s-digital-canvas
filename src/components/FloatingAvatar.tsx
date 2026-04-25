@@ -20,7 +20,11 @@ function PhotoPrism({ pointer }: { pointer: { x: number; y: number } }) {
   useMemo(() => {
     textures.forEach((t) => {
       t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = 8;
+      t.anisotropy = 16;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.magFilter = THREE.LinearFilter;
+      t.generateMipmaps = true;
+      t.needsUpdate = true;
     });
   }, [textures]);
 
@@ -66,14 +70,11 @@ function PhotoPrism({ pointer }: { pointer: { x: number; y: number } }) {
         return (
           <mesh key={i} position={[x, 0, z]} rotation={[0, angle, 0]}>
             <planeGeometry args={[sideLen * 0.95, height * 0.92]} />
-            <meshStandardMaterial
+            <meshBasicMaterial
               map={tex}
-              roughness={0.4}
-              metalness={0.1}
-              emissiveMap={tex}
-              emissive="#ffffff"
-              emissiveIntensity={0.08}
               toneMapped={false}
+              transparent={false}
+              side={THREE.FrontSide}
             />
           </mesh>
         );
