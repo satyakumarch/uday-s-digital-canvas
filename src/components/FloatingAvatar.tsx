@@ -1,4 +1,4 @@
-import { Suspense, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useLoader } from "@react-three/fiber";
 import { Float, Environment, ContactShadows } from "@react-three/drei";
 import * as THREE from "three";
@@ -60,15 +60,18 @@ function makePhotoMaterial(map: THREE.Texture) {
 }
 
 /**
- * A rotating triangular prism whose three side-faces each show a different
- * portrait. Auto-rotates idly and reacts subtly to pointer position.
+ * A single front-facing photo plane that shows the full portrait. No spinning —
+ * just a subtle pointer-driven parallax tilt and an auto-cycling carousel
+ * through the available portraits.
  */
-function PhotoPrism({
+function PhotoPanel({
   pointer,
   adjust,
+  photoIndex,
 }: {
   pointer: { x: number; y: number };
   adjust: PhotoAdjust;
+  photoIndex: number;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const textures = useLoader(THREE.TextureLoader, photoUrls);
@@ -84,74 +87,52 @@ function PhotoPrism({
     });
   }, [textures]);
 
-  // Build one custom material per texture, kept stable across renders.
+  // One material per texture, kept stable across renders.
   const materials = useMemo(
     () => textures.map((t) => makePhotoMaterial(t)),
     [textures],
   );
 
-  // Push slider values into the shader uniforms each frame.
-  useFrame((_, delta) => {
+  // Push slider values into uniforms + apply gentle parallax tilt.
+  useFrame(() => {
     materials.forEach((m) => {
       m.uniforms.uBrightness.value = adjust.brightness;
       m.uniforms.uContrast.value = adjust.contrast;
       m.uniforms.uSaturation.value = adjust.saturation;
     });
-
     const g = groupRef.current;
     if (!g) return;
-    g.rotation.y += delta * 0.45;
-    const targetX = pointer.y * 0.35;
-    const targetZ = -pointer.x * 0.2;
-    g.rotation.x += (targetX - g.rotation.x) * 0.06;
-    g.rotation.z += (targetZ - g.rotation.z) * 0.06;
+    const targetY = pointer.x * 0.18;
+    const targetX = pointer.y * 0.18;
+    g.rotation.y += (targetY - g.rotation.y) * 0.08;
+    g.rotation.x += (targetX - g.rotation.x) * 0.08;
   });
 
-  const radius = 1.1;
-  const height = 2.6;
+  // Plane sized to show the full portrait (taller than wide).
+  const width = 2.4;
+  const height = 3.0;
 
   return (
     <group ref={groupRef}>
-      <mesh castShadow receiveShadow>
-        <cylinderGeometry args={[radius, radius, height, 3, 1, false]} />
-        <meshStandardMaterial
-          color="#1a1a3a"
-          metalness={0.6}
-          roughness={0.25}
-          emissive="#4f46e5"
-          emissiveIntensity={0.15}
-        />
+      {/* Decorative glowing frame behind the photo */}
+      <mesh position={[0, 0, -0.05]}>
+        <planeGeometry args={[width + 0.18, height + 0.18]} />
+        <meshBasicMaterial color="#7c5cff" toneMapped={false} />
       </mesh>
 
-      {textures.map((_, i) => {
-        const angle = (i / 3) * Math.PI * 2;
-        const apothem = radius * Math.cos(Math.PI / 3);
-        const x = Math.sin(angle) * (apothem + 0.01);
-        const z = Math.cos(angle) * (apothem + 0.01);
-        const sideLen = radius * Math.sqrt(3);
-        return (
-          <mesh
-            key={i}
-            position={[x, 0, z]}
-            rotation={[0, angle, 0]}
-            material={materials[i]}
-          >
-            <planeGeometry args={[sideLen * 0.95, height * 0.92]} />
-          </mesh>
-        );
-      })}
+      {/* Cross-fade all photos by toggling material opacity */}
+      {textures.map((_, i) => (
+        <mesh key={i} position={[0, 0, i * 0.001]} material={materials[i]}>
+          <planeGeometry args={[width, height]} />
+        </mesh>
+      ))}
 
-      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, -height / 2 - 0.05, 0]}>
-        <torusGeometry args={[radius * 1.15, 0.03, 16, 64]} />
-        <meshStandardMaterial
-          color="#7c5cff"
-          emissive="#7c5cff"
-          emissiveIntensity={2}
-          toneMapped={false}
-        />
-      </mesh>
-      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, height / 2 + 0.05, 0]}>
-        <torusGeometry args={[radius * 1.15, 0.03, 16, 64]} />
+      {/* Visibility toggle for the carousel — the active one renders on top */}
+      <FadePhotos materials={materials} activeIndex={photoIndex} />
+
+      {/* Glowing accent ring under the panel */}
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, -height / 2 - 0.15, 0]}>
+        <torusGeometry args={[width * 0.55, 0.025, 16, 64]} />
         <meshStandardMaterial
           color="#22d3ee"
           emissive="#22d3ee"
@@ -161,6 +142,48 @@ function PhotoPrism({
       </mesh>
     </group>
   );
+}
+
+/**
+ * Drives a smooth opacity cross-fade between the photo materials so only the
+ * active portrait is visible at full strength.
+ */
+function FadePhotos({
+  materials,
+  activeIndex,
+}: {
+  materials: THREE.ShaderMaterial[];
+  activeIndex: number;
+}) {
+  // Initial setup: enable transparency on all photo materials.
+  useEffect(() => {
+    materials.forEach((m, i) => {
+      m.transparent = true;
+      m.uniforms.uOpacity = { value: i === activeIndex ? 1 : 0 };
+      // Patch the fragment shader once to honor uOpacity.
+      if (!m.userData.opacityPatched) {
+        m.fragmentShader = m.fragmentShader.replace(
+          "uniform float uSaturation;",
+          "uniform float uSaturation;\nuniform float uOpacity;",
+        );
+        m.fragmentShader = m.fragmentShader.replace(
+          "gl_FragColor = vec4(clamp(c, 0.0, 1.0), tex.a);",
+          "gl_FragColor = vec4(clamp(c, 0.0, 1.0), tex.a * uOpacity);",
+        );
+        m.needsUpdate = true;
+        m.userData.opacityPatched = true;
+      }
+    });
+  }, [materials, activeIndex]);
+
+  useFrame((_, delta) => {
+    materials.forEach((m, i) => {
+      const target = i === activeIndex ? 1 : 0;
+      const u = m.uniforms.uOpacity;
+      if (u) u.value += (target - u.value) * Math.min(1, delta * 3);
+    });
+  });
+  return null;
 }
 
 function OrbitingDots() {
