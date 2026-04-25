@@ -240,6 +240,16 @@ export function FloatingAvatar() {
   const [pointer, setPointer] = useState({ x: 0, y: 0 });
   const [adjust, setAdjust] = useState<PhotoAdjust>(DEFAULT_ADJUST);
   const [showControls, setShowControls] = useState(false);
+  const [photoIndex, setPhotoIndex] = useState(0);
+
+  // Auto-cycle through portraits without rotating the mesh.
+  useEffect(() => {
+    const id = setInterval(
+      () => setPhotoIndex((i) => (i + 1) % photoUrls.length),
+      4500,
+    );
+    return () => clearInterval(id);
+  }, []);
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -279,13 +289,15 @@ export function FloatingAvatar() {
           <pointLight position={[4, -1, 2]} intensity={1} color="#22d3ee" />
 
           <Suspense fallback={null}>
-            <Float speed={1.4} rotationIntensity={0.2} floatIntensity={0.8}>
-              <PhotoPrism pointer={pointer} adjust={adjust} />
-            </Float>
+            <PhotoPanel
+              pointer={pointer}
+              adjust={adjust}
+              photoIndex={photoIndex}
+            />
             <OrbitingDots />
             <ContactShadows
-              position={[0, -1.7, 0]}
-              opacity={0.45}
+              position={[0, -2.0, 0]}
+              opacity={0.4}
               scale={6}
               blur={2.4}
               far={3}
