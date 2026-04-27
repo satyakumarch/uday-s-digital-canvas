@@ -1,0 +1,19 @@
+# Render deployment config
+# Increases Node old-space and disables sourcemaps to keep peak build memory
+# under the 512Mi limit on the free tier.
+
+services:
+  - type: web
+    name: portfolio
+    runtime: static
+    buildCommand: bun install && bun run build
+    staticPublishPath: ./dist/client
+    envVars:
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=460
+      - key: NODE_VERSION
+        value: 20
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
